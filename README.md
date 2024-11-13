@@ -70,10 +70,10 @@ except ValueError as e:
     print(f"Error: {e}")
 ```
 
-## License
+## API Usage
 
-MIT License
+Start the API server:
 
-## Contributing
+## API Testing with Postman
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+1. Start the API server:

@@ -97,13 +97,20 @@ class ReceiptAnalyzer:
         date_patterns = [
             r'\d{4}[-/年]\d{1,2}[-/月]\d{1,2}',  # YYYY-MM-DD
             r'\d{1,2}[-/]\d{1,2}[-/]\d{4}',      # DD-MM-YYYY
-            r'\d{1,2}\s*(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s*\d{4}'  # DD MMM YYYY
+            r'\d{1,2}\s*(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s*\d{4}',  # DD MMM YYYY
+            r'\d{1,2}[-/\.]\d{1,2}[-/\.]\d{2,4}',  # DD-MM-YY or DD-MM-YYYY with various separators
+            r'\d{4}年\d{1,2}月\d{1,2}日',        # Chinese format
+            r'\d{1,2}/\d{1,2}/\d{2,4}'           # Common slash format
         ]
         
         for pattern in date_patterns:
             if match := re.search(pattern, text, re.IGNORECASE):
                 try:
-                    return self._normalize_date(match.group(0))
+                    date_str = match.group(0)
+                    # Handle 2-digit years
+                    if re.search(r'\d{1,2}[-/\.]\d{1,2}[-/\.]\d{2}$', date_str):
+                        date_str = re.sub(r'(\d{2})$', r'20\1', date_str)
+                    return self._normalize_date(date_str)
                 except ValueError:
                     continue
         return None
@@ -161,42 +168,41 @@ class ReceiptAnalyzer:
 
     def _extract_amounts(self, text_blocks: List[str], detected_currency: Optional[str] = None) -> Dict:
         amounts = {'amount': None, 'currency': detected_currency}
-        total_indicators = ['total', 'amount', 'sum', 'due', 'pay', 'balance']
+        total_indicators = ['total', 'amount', 'sum', 'due', 'pay', 'balance', 'grand total', 
+                          'final amount', 'total amount', 'total due']
         
-        # Use detected currency in pattern if available
-        if detected_currency:
-            currencies = self.currency_patterns.get(detected_currency, [])
-            amount_pattern = fr'({"|".join(currencies)})?\s*(\d+[.,]\d{{2}})'
-        else:
-            amount_pattern = self._get_amount_pattern()
-            
-        # First pass: Look for amounts with total indicators
+        amount_pattern = self._get_amount_pattern()
+        all_amounts = []
+        
+        # First look for amounts with total indicators
         for text in reversed(text_blocks):  # Start from bottom
             text_lower = text.lower()
             if any(indicator in text_lower for indicator in total_indicators):
-                if match := re.search(amount_pattern, text):
-                    print(f"Found amount with indicator: {text}")
-                    amounts['amount'] = self._normalize_amount(match.group(2))
-                    amounts['currency'] = self._normalize_currency(match.group(1))
-                    return amounts
+                matches = re.finditer(amount_pattern, text)
+                for match in matches:
+                    try:
+                        amount = self._normalize_amount(match.group(2))
+                        curr = self._normalize_currency(match.group(1)) or detected_currency
+                        all_amounts.append((float(amount), curr, 0.9))  # High confidence for matched totals
+                    except ValueError:
+                        continue
 
-        # Second pass: Look for largest amount in last 10 lines
-        amounts_found = []
+        # Then look for amounts in last 10 lines
         for text in text_blocks[-10:]:
-            if match := re.search(amount_pattern, text):
+            matches = re.finditer(amount_pattern, text)
+            for match in matches:
                 try:
-                    amount = float(self._normalize_amount(match.group(2)))
-                    curr = self._normalize_currency(match.group(1))
-                    amounts_found.append((amount, curr, text))
+                    amount = self._normalize_amount(match.group(2))
+                    curr = self._normalize_currency(match.group(1)) or detected_currency
+                    all_amounts.append((float(amount), curr, 0.7))  # Lower confidence for other amounts
                 except ValueError:
                     continue
 
-        if amounts_found:
-            # Sort by amount value, get largest
-            largest = max(amounts_found, key=lambda x: x[0])
-            print(f"Selected largest amount: {largest[2]}")
-            amounts['amount'] = str(largest[0])
-            amounts['currency'] = largest[1]
+        if all_amounts:
+            # Sort by amount value and confidence
+            all_amounts.sort(key=lambda x: (x[2], x[0]), reverse=True)
+            amounts['amount'] = str(all_amounts[0][0])
+            amounts['currency'] = all_amounts[0][1]
 
         return amounts
 
@@ -228,36 +234,29 @@ class ReceiptAnalyzer:
         return True
 
     def _find_merchant(self, text_blocks: List[str]) -> Tuple[Optional[str], float]:
-        merchant_indicators = ['ltd', 'limited', 'inc', 'corp', 'co', 'company', 'store', 'restaurant', 'shop']
+        merchant_indicators = ['ltd', 'limited', 'inc', 'corp', 'co', 'company', 'store', 
+                             'restaurant', 'shop', 'cafe', 'hotel', 'mall', 'market']
         
-        # First pass: Look for business indicators
-        for text in text_blocks[:7]:  # Check first 7 lines
+        # First try to find merchant name in first 5 lines
+        for i, text in enumerate(text_blocks[:5]):
             cleaned_text = self._preprocess_text(text)
+            # Skip very short lines or lines with unwanted content
+            if len(text.strip()) < 3 or self._is_unwanted_merchant_line(cleaned_text):
+                continue
+                
+            # Check for business indicators
             if any(indicator in cleaned_text for indicator in merchant_indicators):
                 merchant = re.sub(r'\s*(ltd|limited|inc|corp)\.?\s*$', '', text, flags=re.IGNORECASE)
-                print(f"Found merchant with indicator: {merchant}")
-                return merchant.strip(), 0.9
+                return merchant.strip(), 0.95
+            
+            # Check for capitalized words
+            if text.isupper() or (len(text.split()) > 1 and all(word[0].isupper() for word in text.split())):
+                return text.strip(), 0.9
         
-        # Second pass: Look for longest capitalized line
-        candidates = []
-        for text in text_blocks[:5]:
-            text = text.strip()
-            if (len(text) > 3 and 
-                not self._is_unwanted_merchant_line(text.lower()) and
-                any(c.isupper() for c in text)):
-                candidates.append((text, len(text)))
-        
-        if candidates:
-            # Choose the longest candidate
-            merchant = max(candidates, key=lambda x: x[1])[0]
-            print(f"Found merchant by capitalization: {merchant}")
-            return merchant, 0.7
-        
-        # Last resort: first non-empty line
+        # Fallback to first non-empty line that looks like a name
         for text in text_blocks[:3]:
-            if len(text.strip()) > 3:
-                print(f"Found merchant as first line: {text}")
-                return text.strip(), 0.5
+            if len(text.strip()) > 3 and not any(char.isdigit() for char in text):
+                return text.strip(), 0.7
                 
         return None, 0.0
 
@@ -320,36 +319,30 @@ class ReceiptAnalyzer:
         return max(type_scores.items(), key=lambda x: x[1])[0]
 
     def _calculate_confidence(self, data: Dict) -> float:
-        # Enhanced confidence calculation
         confidence = 0.0
         weights = {
-            'bill_date': 0.2,
-            'amount': 0.25,
-            'merchant_name': 0.2,
-            'description': 0.15,
-            'currency': 0.1,
-            'type': 0.1
+            'bill_date': 0.25,
+            'amount': 0.3,
+            'merchant_name': 0.25,
+            'currency': 0.2
         }
         
-        # Base confidence from required fields
         for field, weight in weights.items():
-            if field == 'description' and data[field]:
-                items_confidence = min(len(data[field]) * 0.05, weight)
-                confidence += items_confidence
-            elif data.get(field):
-                confidence += weight
+            if data.get(field):
+                if field == 'amount':
+                    # Higher confidence for reasonable amount values
+                    amount = float(data['amount'])
+                    if 0.01 <= amount <= 1000000:  # Reasonable range
+                        confidence += weight
+                    else:
+                        confidence += weight * 0.5
+                else:
+                    confidence += weight
         
-        # Additional validation checks
-        if data.get('subtotal') and data.get('amount'):
-            if float(data['subtotal']) < float(data['amount']):
-                confidence += 0.1
-                
-        if data.get('description') and data.get('amount'):
-            items_total = sum(float(item['price']) for item in data['description'])
-            total = float(data['amount'])
-            if 0.9 <= items_total/total <= 1.1:
-                confidence += 0.1
-                
+        # Penalty for missing critical fields
+        if not data.get('amount') or not data.get('merchant_name'):
+            confidence *= 0.5
+            
         return round(min(confidence, 1.0), 2)
 
     def _is_unwanted_merchant_line(self, text: str) -> bool:
