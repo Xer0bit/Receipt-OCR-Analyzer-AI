@@ -9,7 +9,18 @@ from fuzzywuzzy import fuzz
 from functools import lru_cache
 
 class ReceiptAnalyzer:
+    """
+    A class for analyzing and extracting information from receipts using OCR.
+    Supports multiple currencies, receipt types, and various date formats.
+    """
+
     def __init__(self):
+        """
+        Initialize the receipt analyzer with OCR model and recognition patterns.
+        - Sets up OCR model with pretrained weights
+        - Defines receipt type patterns
+        - Initializes currency recognition patterns
+        """
         self.model = ocr_predictor(det_arch='db_resnet50', reco_arch='crnn_vgg16_bn', pretrained=True)
         self.receipt_types = {
             'invoice': ['invoice', 'bill to', 'payment due', 'invoice no'],
@@ -27,6 +38,25 @@ class ReceiptAnalyzer:
 
     @lru_cache(maxsize=100)
     def analyze_receipt(self, image_path: str) -> Dict:
+        """
+        Main method to analyze a receipt image and extract relevant information.
+        
+        Args:
+            image_path (str): Path to the receipt image file
+            
+        Returns:
+            Dict: Extracted receipt information including:
+                - merchant_name: Name of the merchant
+                - bill_date: Date of the receipt
+                - amount: Total amount
+                - description: Receipt description
+                - type: Type of receipt
+                - currency: Detected currency
+                - confidence_score: Overall confidence in extraction
+                
+        Raises:
+            ValueError: If invalid receipt data is detected
+        """
         doc = DocumentFile.from_images(image_path)
         result = self.model(doc)
         
@@ -70,6 +100,10 @@ class ReceiptAnalyzer:
         return extracted_data
 
     def _extract_text_blocks(self, result) -> List[str]:
+        """
+        Extracts text blocks from OCR result.
+        Processes the document hierarchically: page -> block -> line -> word
+        """
         text_blocks = []
         for page in result.pages:
             for block in page.blocks:
@@ -79,6 +113,11 @@ class ReceiptAnalyzer:
         return text_blocks
 
     def _find_date(self, text_blocks: List[str]) -> Optional[str]:
+        """
+        Searches for and extracts date from text blocks.
+        Prioritizes lines containing date keywords before falling back to pattern matching.
+        Supports multiple date formats including international standards.
+        """
         date_keywords = ['date:', 'dated:', 'bill date:', 'invoice date:']
         for text in text_blocks:
             text_lower = text.lower()
@@ -167,6 +206,16 @@ class ReceiptAnalyzer:
         return currency_map.get(currency, currency)
 
     def _extract_amounts(self, text_blocks: List[str], detected_currency: Optional[str] = None) -> Dict:
+        """
+        Extracts monetary amounts from text blocks.
+        
+        Strategy:
+        1. First looks for amounts near total indicators
+        2. Falls back to amounts in last 10 lines
+        3. Assigns confidence scores based on context
+        
+        Returns dictionary with amount and currency.
+        """
         amounts = {'amount': None, 'currency': detected_currency}
         total_indicators = ['total', 'amount', 'sum', 'due', 'pay', 'balance', 'grand total', 
                           'final amount', 'total amount', 'total due']
@@ -221,6 +270,16 @@ class ReceiptAnalyzer:
         return items
 
     def _validate_receipt(self, data: Dict) -> bool:
+        """
+        Validates extracted receipt data.
+        
+        Checks:
+        - Presence of critical fields (merchant name or amount)
+        - Reasonable values for amounts
+        - Date format validity
+        
+        Returns True if receipt data appears valid.
+        """
         print("\nValidation Details:")
         print(f"Merchant Name: {data['merchant_name']}")
         print(f"Amount: {data['amount']}")
@@ -234,6 +293,16 @@ class ReceiptAnalyzer:
         return True
 
     def _find_merchant(self, text_blocks: List[str]) -> Tuple[Optional[str], float]:
+        """
+        Identifies merchant name from text blocks.
+        
+        Strategy:
+        1. Checks first 5 lines for business indicators
+        2. Looks for capitalized text
+        3. Falls back to first suitable line
+        
+        Returns tuple of (merchant_name, confidence_score)
+        """
         merchant_indicators = ['ltd', 'limited', 'inc', 'corp', 'co', 'company', 'store', 
                              'restaurant', 'shop', 'cafe', 'hotel', 'mall', 'market']
         
@@ -319,6 +388,17 @@ class ReceiptAnalyzer:
         return max(type_scores.items(), key=lambda x: x[1])[0]
 
     def _calculate_confidence(self, data: Dict) -> float:
+        """
+        Calculates overall confidence score for extracted data.
+        
+        Factors:
+        - Presence of critical fields
+        - Reasonableness of amount values
+        - Quality of merchant name
+        - Currency detection confidence
+        
+        Returns float between 0 and 1.
+        """
         confidence = 0.0
         weights = {
             'bill_date': 0.25,
@@ -373,7 +453,17 @@ class ReceiptAnalyzer:
         return text
 
     def _detect_currency(self, text_blocks: List[str]) -> Tuple[Optional[str], float]:
-        """Detect currency with confidence score"""
+        """
+        Detects currency used in receipt.
+        
+        Strategy:
+        1. Matches against known currency patterns
+        2. Counts occurrences of each currency
+        3. Considers position relative to amounts
+        4. Calculates confidence based on frequency and context
+        
+        Returns tuple of (currency_code, confidence_score)
+        """
         currency_counts = {}
         currency_positions = {}
         
@@ -432,6 +522,10 @@ Confidence: {self.confidence_score}
 """
 
 if __name__ == "__main__":
+    """
+    Example usage of ReceiptAnalyzer.
+    Processes a test receipt and displays extracted information.
+    """
     analyzer = ReceiptAnalyzer()
     receipt_path = "test.jpg"
     try:
