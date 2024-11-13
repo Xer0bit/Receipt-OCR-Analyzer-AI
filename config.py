@@ -1,4 +1,29 @@
 import os
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
+
+class Settings:
+    PROJECT_NAME = "Receipt Analyzer API"
+    PROJECT_VERSION = "1.0.0"
+    
+    # API Settings
+    API_HOST = os.getenv("API_HOST", "0.0.0.0")
+    API_PORT = int(os.getenv("API_PORT", 8000))
+    
+    # Security
+    SECRET_KEY = os.getenv("SECRET_KEY", "your-super-secret-key-change-this")
+    API_USERNAME = os.getenv("API_USERNAME", "admin")
+    API_PASSWORD = os.getenv("API_PASSWORD", "38digital123")
+    
+    # CORS
+    ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "*").split(",")
+    
+    # File Upload
+    MAX_UPLOAD_SIZE = int(os.getenv("MAX_UPLOAD_SIZE", 10 * 1024 * 1024))  # 10MB
+    
+settings = Settings()
 
 CONFIG = {
     'SUPPORTED_LANGUAGES': ['eng', 'chi_sim', 'chi_tra'],

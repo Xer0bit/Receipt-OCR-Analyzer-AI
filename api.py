@@ -1,4 +1,6 @@
-from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi import FastAPI, File, UploadFile, HTTPException, Depends, status
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
+import secrets
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional
@@ -9,17 +11,38 @@ import os
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 import base64
+from config import settings
 
 app = FastAPI(
-    title="Receipt Analyzer API",
+    title=settings.PROJECT_NAME,
     description="API for analyzing receipt images and extracting data",
-    version="1.0.0"
+    version=settings.PROJECT_VERSION
 )
 
-# Configure CORS
+# Add security scheme
+security = HTTPBasic()
+
+# Update authentication constants
+USERNAME = settings.API_USERNAME
+PASSWORD = settings.API_PASSWORD
+
+# Add authentication function
+def verify_credentials(credentials: HTTPBasicCredentials = Depends(security)):
+    correct_username = secrets.compare_digest(credentials.username, USERNAME)
+    correct_password = secrets.compare_digest(credentials.password, PASSWORD)
+    
+    if not (correct_username and correct_password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid credentials",
+            headers={"WWW-Authenticate": "Basic"},
+        )
+    return credentials
+
+# Configure CORS with settings
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Update this with your frontend URL in production
+    allow_origins=settings.ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -46,7 +69,7 @@ class ReceiptResponse(BaseModel):
     confidence_score: float
 
 @app.get("/analyze/")
-async def analyze_receipt_info():
+async def analyze_receipt_info(credentials: HTTPBasicCredentials = Depends(verify_credentials)):
     """
     Provide information about how to use the analyze endpoint
     """
@@ -61,7 +84,10 @@ async def analyze_receipt_info():
     }
 
 @app.post("/analyze/", response_model=ReceiptResponse)
-async def analyze_receipt(file: UploadFile = File(...)):
+async def analyze_receipt(
+    file: UploadFile = File(...),
+    credentials: HTTPBasicCredentials = Depends(verify_credentials)
+):
     """
     Analyze a receipt image and extract information
     """
@@ -89,7 +115,7 @@ async def analyze_receipt(file: UploadFile = File(...)):
         raise HTTPException(500, f"Error processing receipt: {str(e)}")
 
 @app.get("/analyze/tayudtsfgyuasgf", response_class=HTMLResponse)
-async def test_analyze_info():
+async def test_analyze_info(credentials: HTTPBasicCredentials = Depends(verify_credentials)):
     """
     Test endpoint that shows an HTML form for receipt analysis
     """
@@ -117,7 +143,10 @@ async def test_analyze_info():
     """
 
 @app.post("/analyze/tayudtsfgyuasgf", response_class=HTMLResponse)
-async def test_analyze_receipt(file: UploadFile = File(...)):
+async def test_analyze_receipt(
+    file: UploadFile = File(...),
+    credentials: HTTPBasicCredentials = Depends(verify_credentials)
+):
     """
     Test endpoint that shows analysis results in HTML format
     """
@@ -212,4 +241,10 @@ async def test_analyze_receipt(file: UploadFile = File(...)):
         return error_html
 
 if __name__ == "__main__":
-    uvicorn.run("api:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run(
+        "api:app", 
+        host=settings.API_HOST, 
+        port=settings.API_PORT,
+        reload=False,  # Disable reload in production
+        workers=4  # Number of worker processes
+    )
