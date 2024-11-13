@@ -75,12 +75,12 @@ async def analyze_receipt_info():
     """
     return {
         "message": "This endpoint accepts POST requests only",
-        "usage": {
-            "method": "POST",
-            "content-type": "multipart/form-data",
-            "required_field": "file (image file)",
-            "supported_formats": ["image/jpeg", "image/png", "image/tiff"]
-        }
+        # "usage": {
+        #     "method": "POST",
+        #     "content-type": "multipart/form-data",
+        #     "required_field": "file (image file)",
+        #     "supported_formats": ["image/jpeg", "image/png", "image/tiff"]
+        # }
     }
 
 @app.post("/analyze/", response_model=ReceiptResponse)
