@@ -26,8 +26,8 @@ security = HTTPBasic()
 USERNAME = settings.API_USERNAME
 PASSWORD = settings.API_PASSWORD
 
-# Add authentication function
-def verify_credentials(credentials: HTTPBasicCredentials = Depends(security)):
+# Add authentication function specifically for secret page
+def verify_secret_page_credentials(credentials: HTTPBasicCredentials = Depends(security)):
     correct_username = secrets.compare_digest(credentials.username, USERNAME)
     correct_password = secrets.compare_digest(credentials.password, PASSWORD)
     
@@ -69,7 +69,7 @@ class ReceiptResponse(BaseModel):
     confidence_score: float
 
 @app.get("/analyze/")
-async def analyze_receipt_info(credentials: HTTPBasicCredentials = Depends(verify_credentials)):
+async def analyze_receipt_info():
     """
     Provide information about how to use the analyze endpoint
     """
@@ -85,8 +85,7 @@ async def analyze_receipt_info(credentials: HTTPBasicCredentials = Depends(verif
 
 @app.post("/analyze/", response_model=ReceiptResponse)
 async def analyze_receipt(
-    file: UploadFile = File(...),
-    credentials: HTTPBasicCredentials = Depends(verify_credentials)
+    file: UploadFile = File(...)
 ):
     """
     Analyze a receipt image and extract information
@@ -115,7 +114,7 @@ async def analyze_receipt(
         raise HTTPException(500, f"Error processing receipt: {str(e)}")
 
 @app.get("/analyze/tayudtsfgyuasgf", response_class=HTMLResponse)
-async def test_analyze_info(credentials: HTTPBasicCredentials = Depends(verify_credentials)):
+async def test_analyze_info(credentials: HTTPBasicCredentials = Depends(verify_secret_page_credentials)):
     """
     Test endpoint that shows an HTML form for receipt analysis
     """
@@ -145,7 +144,7 @@ async def test_analyze_info(credentials: HTTPBasicCredentials = Depends(verify_c
 @app.post("/analyze/tayudtsfgyuasgf", response_class=HTMLResponse)
 async def test_analyze_receipt(
     file: UploadFile = File(...),
-    credentials: HTTPBasicCredentials = Depends(verify_credentials)
+    credentials: HTTPBasicCredentials = Depends(verify_secret_page_credentials)
 ):
     """
     Test endpoint that shows analysis results in HTML format
@@ -246,5 +245,5 @@ if __name__ == "__main__":
         host=settings.API_HOST, 
         port=settings.API_PORT,
         reload=False,  # Disable reload in production
-        workers=4  # Number of worker processes
+        # workers=4  # Number of worker processes
     )
